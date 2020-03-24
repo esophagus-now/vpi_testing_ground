@@ -1,0 +1,304 @@
+========
+OVERVIEW
+========
+
+You know how you can call system tasks like $fscanf, $display, $readmemh, etc. 
+from inside Verilog? Well it turns out you can write your own system tasks in C 
+that do whatever you want.
+
+To do this, you will use the Verilog Programming Interface (VPI). By writing 
+certain functions with certain arguments, you can compile a shared object that 
+any (compliant) Verilog simulator will know how to load at runtime.
+
+The steps to using VPI are as follows; each one is explained in detail in a 
+later section.
+
+    In your C source code,
+    
+    1) Create a NULL-terminated array of function pointers that will be called 
+       when the Verilog simulator loads your shared object. 
+       
+    2) In one (or more) of your startup routines, call vpi_register_systf for 
+       each new system task you want to add. This function takes a struct as 
+       its argument which includes (among other things) two callbacks:
+       
+        2a) A "compiletf" callback. When the Verilog file is initially parsed 
+            by the Verilog simulator, this callback is triggered to let you 
+            check arguments to your system tasks. This callback is optional and 
+            can be omitted.
+            
+        2b) A "calltf" callback. Whereas the compiletf callback is a static 
+            compiletime check, this callback actually implements the system 
+            function (at runtime) that you are asking for in your Verilog code.
+    
+    And finally,
+    
+    3) Compile the C and Verilog and run the Verilog simulator with the correct
+       arguments.
+
+This document starts with a minimal working example that you should be able to 
+start using right away. The rest of the document explains the steps in detail:
+
+    - Registering your callbacks
+    - The VPI API that your callbacks will use
+    - How to write the callbacks themselves
+
+
+REFERENCE MATERIAL
+------------------
+
+The VPI is defined by IEEE standard 1364-2005 (the IEEE Standard for Verilog) 
+in sections 26 and 27, along with Annex G. This standard can be found at:
+
+    https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1620780
+
+This document is actually quite easy to read; the only thing I'm trying to do 
+here is distill it down to the minimum information you need to get started with 
+VPI.
+
+See also:
+
+    https://iverilog.fandom.com/wiki/Using_VPI
+
+
+=======================
+MINIMAL WORKING EXAMPLE
+=======================
+
+This example has two source files (and a Makefile). my_task.c contains the code 
+that will be called by the Verilog simulation, and hello.v is the Verilog file 
+that calls it.
+
+Please note: the provided Makefile uses Icarus Verilog. You can install it from 
+the iverilog package. You can use XSim or Modelsim instead of Icarus, but 
+you'll have to figure out how to write the Makefile to support them. 
+
+Use "make run" to execute the Verilog simulation.
+
+my_task.c
+~~~~~~~~~
+
+    #include  <vpi_user.h>
+
+    static int my_compiletf(char*user_data) {
+          return 0;
+    }
+
+    static int my_calltf(char* user_data) {
+          vpi_printf("Hello, World!\n");
+          return 0;
+    }
+
+    void my_task_register() {
+        s_vpi_systf_data tf_data = {
+            .type      = vpiSysTask,
+            .tfname    = "$my_task",
+            .calltf    = my_calltf,
+            .compiletf = my_compiletf,
+            .user_data = 0
+        };
+        
+        vpi_register_systf(&tf_data);
+    }
+
+    void (*vlog_startup_routines[])() = {
+        my_task_register,
+        NULL
+    };
+
+
+hello.v
+~~~~~~~
+
+    module main;
+    initial $my_task();
+    endmodule
+
+
+Makefile
+~~~~~~~~
+
+    all: hello.vvp my_task.vpi
+
+    my_task.o: my_task.c
+        gcc -c -fpic my_task.c -I/usr/include/iverilog 
+        
+    my_task.vpi: my_task.o
+        gcc -shared -o my_task.vpi my_task.o -lvpi
+
+    hello.vvp:	hello.v
+        iverilog -o hello.vvp hello.v
+
+    run: hello.vvp my_task.vpi
+        vvp -M. -mmy_task hello.vvp
+        
+    clean:
+        rm -rf *.o
+        rm -rf *.vpi
+        rm -rf *.vvp
+
+
+==========================================
+STARTUP ROUTINES AND REGISTERING CALLBACKS
+==========================================
+
+When the Verilog runtime loads your (compiled) C code, it will look for the 
+vlog_startup_routines array. All the functions in this array will be executed 
+one by one. Use these functions to register your callbacks.
+
+To register a system task callback, fill an s_vpi_systf_data structure with 
+information about your cutom task, and call vpi_register_systf from inside one 
+of your startup routines.
+
+The minimal example in the last section shows how to do this. More details are 
+provided in the corresponding section of vpi_core_api.txt.
+
+
+=======
+VPI API
+=======
+
+Before we can write system task callbacks, we need to understand the API that 
+VPI expects you to use. The full details are in vpi_core_api.txt, but I've 
+provided an executive summary.
+
+SUMMARY
+-------
+
+Given an object with vpiHandle old_handle, if you want to access an object that 
+it points to, use
+
+    new_handle = vpi_handle(type, old_handle)
+
+type is one of the constants defined in vpi_user.h. Refer to Section 26.6 of 
+the IEEE 1364-2005 Standard to find out what types you can use.
+
+If the object has more than one pointer to an object of the desired type, use
+
+    iterator_handle = vpi_iterate(type, old_handle);
+    while (new_handle = vpi_scan(iterator_handle)) {
+    
+        //...
+        
+        if (quit before reading the whole list) {
+            vpi_free_object(iterator_handle);
+            break;
+        }
+    }
+
+To access a compile-time parameter of an object, use
+
+    int my_val = vpi_get(vpiInteger, old_handle);
+    char *my_str = vpi_get(vpiName);
+    //etc.
+
+To access a run-time simulation value, use
+
+    s_vpi_value my_val = {
+        .format = vpiObjTypeVal
+    };
+    
+    vpi_get_value(old_handle, &my_val);
+    
+    //Suppose the value was a vector:
+    if (my_val.format == vpiVectorVal) {
+        //Get the number of bits in the vector
+        int size = vpi_get(vpiSize, old_handle); 
+        
+        //Number of elements in the array of int32s that represent the vector
+        int arrlen = (size + 31)/32; 
+        
+        //The vector is an array of arr_len s_vpi_vecval structs 
+        s_vpi_vecval *bitarr = my_val.value.vector;
+        
+        //Do something with bitarr...
+    }
+    
+    //This specifically asks for an int
+    s_vpi_value my_int_val = {
+        .format = vpiIntVal
+    };
+    
+    //This will cause the vector returned by the last call of vpi_get_value
+    //to be deallocated!
+    vpi_get_value(some_other_handle, &my_int_val);
+    
+    int x = my_int_val.value.integer;
+
+Again, if you're looking for a reference of all the different types of objects 
+and their properties, see Section 26.6 in the IEEE 1364-2005 standard. 
+
+
+=============================
+WRITING SYSTEM TASK CALLBACKS
+=============================
+
+The function signature for your callbacks is
+
+    void my_callback(char *user_data)
+
+The argument that gets passed in is whatever you put into the user_data field 
+of the s_vpi_systf_data struct that was registered with the VPI core.
+
+To get access to the arguments, use the following code. Again, the full details 
+are in vpi_core_api.txt.
+
+    void my_callback(char *user_data) {
+        vpiHandle systf_call_object = vpi_handle(vpiSysTfCall, NULL);
+        
+        vpiHandle arg_list_iter = vpi_iterate(vpiArgument, systf_call_object);
+        
+        vpiHandle arg;
+        
+        while (arg = vpi_scan(arg_list_iter)) {
+            //Do something with arg. For example,
+            s_vpi_value arg_val = {
+                .format = vpiObjTypeVal
+            };
+            
+            vpi_get_value(arg, &arg_val);
+            
+            //etc.
+            
+            if (/*quitting loop early*/) {
+                vpi_free_object(arg_list_iter);
+            }
+        }
+        
+        //At this point, both arg_list_iter and arg are no longer valid
+    }
+
+If you want to change a value in the simulation, you can use
+
+        s_vpi_value new_arg_val;
+        new_arg_val.format = vpiIntVal;
+        new_arg_val.value.integer = 12;
+        
+        vpi_put_value(arg, &new_arg_val, NULL, vpiNoDelay);
+    
+This sets the value "right now" in the simulation. There are other flags you 
+can use in the last argument to vpi_put_value, but I don't know how to use 
+them.
+
+
+======================
+COMPILING VPI PROGRAMS
+======================
+
+This section is specific to Icarus Verilog. 
+
+Basically, first we compile our C code into a shared library. To do this, we 
+need to use -fpic for Position Independent Code, and we need to use the -I flag 
+to tell the C compiler where vpi_user.h is located.
+
+    $ gcc -c -fpic my_code.c -I/usr/include/iverilog
+    $ gcc -o my_code.vpi -shared my_code.o -lvpi
+
+Now, we ask Icarus Verilog to compile and run the Verilog with our VPI program. 
+The -M and -m switches tell vvp (the program that runs compiled Verilog 
+programs) where to find the shared library code and what it's called.
+
+    $ iverilog -o my_module.vvp my_module.v
+    $ vvp -M. -mmy_code my_module.vvp
+
+That's it!
