@@ -40,12 +40,12 @@ void del_ptr_to_free_list() {
 
 static int my_entry_cb(s_cb_data *cb_data) {
 	srand(time(NULL));
-	vpi_printf("In the entry callback\n");
+	//vpi_printf("In the entry callback\n");
 	return 0;
 }
 
 static int my_exit_cb(s_cb_data *cb_data) {
-	vpi_printf("In the exit callback\n");
+	//vpi_printf("In the exit callback\n");
 	del_ptr_to_free_list();
 	return 0;
 }
@@ -104,7 +104,6 @@ static int my_compiletf(char*user_data) {
 	ud->tvalid = tvalid;
 	ud->tready = tready;
 	vpi_put_userdata(systfcall, ud);
-	vpi_printf("dat (initial?) = %d\n", ud->val++);
 	return 0;
 	
 err:
@@ -113,7 +112,6 @@ err:
 }
 
 static int my_calltf(char* user_data) {	  
-	vpi_printf("----------------------\n");
 	vpiHandle systfcall = vpi_handle(vpiSysTfCall, NULL);
 
 	calldata *ud = vpi_get_userdata(systfcall);
@@ -157,7 +155,6 @@ static int my_calltf(char* user_data) {
 	myval.value.integer = ud->vld;
 	vpi_put_value(ud->tvalid, &myval, &delay, vpiPureTransportDelay);
 	
-	vpi_printf("----------------------\n");
 	return 0;
 }
 
