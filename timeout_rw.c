@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <stdio.h>
 #include "timeout_rw.h"
 
 //Set up a dummy hander which does nothing
@@ -35,7 +36,7 @@ timeout_rw_ctx* timeout_rw_init() {
         selected_sig_no = SIGUSR2;
     } else {
         //No signals are free. Return NULL.
-        errno = EAGAIN;
+        errno = EBUSY;
         return NULL;
     }
     
@@ -83,23 +84,77 @@ err_free_ctx:
     return NULL;
 }
 
+//Frees a context, disabling all active timers and releasing the signal number.
+//Gracefulyl returns if passed a NULL pointer.
 void timeout_rw_deinit(timeout_rw_ctx *ctx) {
     //Gracefully return if context is NULL
     if (ctx == NULL) return;
     
-    //Deregister the signal handler
     timer_delete(ctx->clk);
+    
+    //Deregister the signal handler
+    struct sigaction sa = {
+        .sa_handler = SIG_DFL
+    };
+    int rc = sigaction(ctx->signo, &sa, NULL);
+    if (rc < 0) {
+        //All we can do is print a message
+        fprintf(stderr, "A terrible error has occurred: can't reset the signal handler properly\n");
+    }
     free(ctx);
 }
 
+static struct itimerspec stop_timer = {
+    .it_interval = {.tv_sec = 0, .tv_nsec = 0},
+    .it_value = {.tv_sec = 0, .tv_nsec = 0}
+};
+
 //Exactly the same as the read() system call, but takes in a timeout_rw context
-//and a number of milliseconds
+//and a number of milliseconds. If timeout_ms == 0, then this uses a blocking 
+//read
 int timeout_read(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned timeout_ms) {
+    if (timeout_ms == 0) {
+        return read(fd, buf, count);
+    }
     
+    struct itimerspec timeout_val = {
+        .it_interval = {.tv_sec = 0, .tv_nsec = 0},
+        .it_value = {.tv_sec = (timeout_ms/1000), .tv_nsec = (timeout_ms%1000)*1000}
+    };
+    
+    //Set the alarm clock
+    timer_settime(ctx->clk, 0, &timeout_val, NULL);
+    int ret = read(fd, buf, count);
+    
+    //Just make sure to cancel the timer if necessary
+    if (ret >= 0 || errno == EINTR) {
+        timer_settime(ctx->clk, 0, &stop_timer, NULL);
+    }
+    
+    return ret;
 }
 
 //Exactly the same as the write() system call, but takes in a timeout_rw context
-//and a number of milliseconds
+//and a number of milliseconds. If timeout_ms == 0, then this uses a blocking 
+//write
 int timeout_write(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned timeout_ms) {
+    if (timeout_ms == 0) {
+        return write(fd, buf, count);
+    }
     
+    struct itimerspec timeout_val = {
+        .it_interval = {.tv_sec = 0, .tv_nsec = 0},
+        .it_value = {.tv_sec = (timeout_ms/1000), .tv_nsec = (timeout_ms%1000)*1000}
+    };
+    
+    //Set the alarm clock
+    timer_settime(ctx->clk, 0, &timeout_val, NULL);
+    int ret = write(fd, buf, count);
+    
+    //Just make sure to cancel the timer if necessary
+    if (ret >= 0 || errno == EINTR) {
+        timer_settime(ctx->clk, 0, &stop_timer, NULL);
+    }
+    
+    return ret;
 }
