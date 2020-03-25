@@ -5,6 +5,7 @@
 
 typedef struct _calldata {
 	int val;
+	int vld;
 	vpiHandle tdata;
 	vpiHandle tvalid;
 	vpiHandle tready;
@@ -38,6 +39,7 @@ void del_ptr_to_free_list() {
 }
 
 static int my_entry_cb(s_cb_data *cb_data) {
+	srand(time(NULL));
 	vpi_printf("In the entry callback\n");
 	return 0;
 }
@@ -119,8 +121,42 @@ static int my_calltf(char* user_data) {
 		vpi_printf("Some kind of fatal error occurred (%s could not get data)\n", __func__);
 		vpi_control(vpiFinish, 1);
 	} 
-
-	vpi_printf("dat = %d\n", ud->val++);
+	
+	s_vpi_value myval = {
+		.format = vpiIntVal
+	};
+	
+	//Check if a flit is being sent right now
+	vpi_get_value(ud->tvalid, &myval);
+	int current_vld = myval.value.integer;
+	vpi_get_value(ud->tready, &myval);
+	int current_rdy = myval.value.integer;
+	
+	if (current_vld && current_rdy) {
+		ud->val++;
+		//Decide if we will be valid on this cycle
+		ud->vld = rand() & 1;
+	} else if (ud->vld == 0) {
+		//Decide if we will be valid on this cycle
+		ud->vld = rand() & 1;
+	}
+	
+	//I don't know if this will work, but I would like this task to be
+	//"non-blocking". There will be small blips, but I view that as
+	//acceptable
+	s_vpi_time delay = {
+		.type = vpiSimTime,
+		.high = 0,
+		.low = 1
+	};
+		
+	//Output next tdata and tvalid
+	myval.value.integer = ud->val;
+	vpi_put_value(ud->tdata, &myval, &delay, vpiPureTransportDelay);
+	
+	myval.value.integer = ud->vld;
+	vpi_put_value(ud->tvalid, &myval, &delay, vpiPureTransportDelay);
+	
 	vpi_printf("----------------------\n");
 	return 0;
 }
