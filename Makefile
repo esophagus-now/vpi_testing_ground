@@ -1,7 +1,7 @@
 all: hello.vvp my_task.vpi
 
-my_task.o: my_task.c
-	gcc -c -fpic -fno-diagnostics-show-caret my_task.c -I/usr/include/iverilog -IC:\MinGW\msys\1.0\local\include\iverilog 
+my_task.o: my_task.c timeout_rw.h timeout_rw.c
+	gcc -c -fpic -fno-diagnostics-show-caret my_task.c timeout_rw.c -I/usr/include/iverilog -IC:\MinGW\msys\1.0\local\include\iverilog 
 	
 my_task.vpi: my_task.o
 	gcc -shared -o my_task.vpi my_task.o -LC:\MinGW\msys\1.0\local\lib -lvpi 
