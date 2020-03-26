@@ -113,18 +113,32 @@ static struct itimerspec stop_timer = {
 //and a number of milliseconds. If timeout_ms == 0, then this uses a blocking 
 //read
 int timeout_read(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned timeout_ms) {
+    int ret;
+    
     if (timeout_ms == 0) {
-        return read(fd, buf, count);
+        ret = read(fd, buf, count);
+        //Save read() return value and errno to make it more flexible for user
+        //to check timeouts without worrying about errno
+        ctx->last_errno = errno;
+        ctx->last_ret = ret;
+        return ret;
     }
     
     struct itimerspec timeout_val = {
         .it_interval = {.tv_sec = 0, .tv_nsec = 0},
-        .it_value = {.tv_sec = (timeout_ms/1000), .tv_nsec = (timeout_ms%1000)*1000}
+        .it_value = {.tv_sec = (timeout_ms/1000), .tv_nsec = (timeout_ms%1000)*1000000}
     };
     
     //Set the alarm clock
     timer_settime(ctx->clk, 0, &timeout_val, NULL);
-    int ret = read(fd, buf, count);
+    
+    //Perform the read
+    ret = read(fd, buf, count);
+    
+    //Save read() return value and errno to make it more flexible for user
+    //to check timeouts without worrying about errno
+    ctx->last_errno = errno;
+    ctx->last_ret = ret;
     
     //Just make sure to cancel the timer if necessary
     if (ret >= 0 || errno == EINTR) {
@@ -138,8 +152,17 @@ int timeout_read(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned 
 //and a number of milliseconds. If timeout_ms == 0, then this uses a blocking 
 //write
 int timeout_write(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned timeout_ms) {
+    int ret;
+    
     if (timeout_ms == 0) {
-        return write(fd, buf, count);
+        ret = write(fd, buf, count);
+        
+        //Save write() return value and errno to make it more flexible for user
+        //to check timeouts without worrying about errno
+        ctx->last_errno = errno;
+        ctx->last_ret = ret;
+        
+        return ret;
     }
     
     struct itimerspec timeout_val = {
@@ -149,7 +172,14 @@ int timeout_write(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned
     
     //Set the alarm clock
     timer_settime(ctx->clk, 0, &timeout_val, NULL);
-    int ret = write(fd, buf, count);
+    
+    //Perform the write
+    ret = write(fd, buf, count);
+    
+    //Save write() return value and errno to make it more flexible for user
+    //to check timeouts without worrying about errno
+    ctx->last_errno = errno;
+    ctx->last_ret = ret;
     
     //Just make sure to cancel the timer if necessary
     if (ret >= 0 || errno == EINTR) {
@@ -157,4 +187,16 @@ int timeout_write(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned
     }
     
     return ret;
+}
+
+//Returns 1 if the last call to timeout_read/timeout_write timed out. Note that
+//this returns 0 if it was successful, had an error, or encountered EOF
+int timed_out(timeout_rw_ctx *ctx) {
+    return (ctx->last_ret < 0) && (ctx->last_errno == EINTR);
+}
+
+//Returns 1 if the last call to timeout_read/timeout_write encountered EOF. 
+//Returns 0 otherwise
+int reached_eof(timeout_rw_ctx *ctx) {
+    return (ctx->last_ret == 0);
 }

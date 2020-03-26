@@ -2,10 +2,15 @@
 #define TIMEOUT_RW_H 1
 
 
+#include <time.h>
+
+
 //Stores state information for this process
 typedef struct _timeout_rw_ctx {
     timer_t clk;
     int signo;
+    int last_errno;
+    int last_ret;
 } timeout_rw_ctx;
 
 //Performs the following initialization steps for allowing timeout_read and 
@@ -31,4 +36,25 @@ int timeout_read(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned 
 //and a number of milliseconds. If timeout_ms == 0, then this uses a blocking 
 //write
 int timeout_write(int fd, void *buf, size_t count, timeout_rw_ctx *ctx, unsigned timeout_ms);
+
+
+//Returns 1 if the last call to timeout_read/timeout_write timed out. Note that
+//this returns 0 if it was successful, had an error, or encountered EOF
+int timed_out(timeout_rw_ctx *ctx);
+
+//Returns 1 if the last call to timeout_read/timeout_write encountered EOF. 
+//Returns 0 otherwise
+int reached_eof(timeout_rw_ctx *ctx);
+
+//Gets human-readable string for last error on this context
+#define timeout_rw_strerror(ctx) strerror(ctx->last_errno)
+
+//Gets last error code
+#define timeout_rw_errcode(ctx) (ctx->last_errno)
+
+//Gets last return value
+#define timeout_rw_retval(ctx) (ctx->last_ret)
+
+#define TIMEOUT_RW_OPEN_FLAGS O_RDONLY
+
 #endif
