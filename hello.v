@@ -11,7 +11,7 @@ initial begin
 	$dumpfile("test.vcd");
 	$dumpvars;
 	$dumplimit(512000);	
-	#200
+	#600
 	$finish;
 end
 

@@ -7,9 +7,13 @@
 #include <string.h>
 #include "timeout_rw.h"
 
+#define BUF_SPACE 80
+
 typedef struct _calldata {
-	int val;
-	int vld;
+    unsigned val_buf[BUF_SPACE];
+    int wr_pos;
+    int rd_pos;
+    int num_vals;
 	vpiHandle tdata;
 	vpiHandle tvalid;
 	vpiHandle tready;
@@ -41,7 +45,7 @@ void del_ptr_to_free_list() {
 		if (cur->free_me) free(cur->free_me);
 		ptr_to_free *next = cur->next;
 		free(cur);
-		cur = cur->next;
+		cur = next;
 	}
 }
 
@@ -126,6 +130,9 @@ static int my_compiletf(char*user_data) {
 	ud->tdata = tdata;
 	ud->tvalid = tvalid;
 	ud->tready = tready;
+    ud->wr_pos = 0;
+    ud->rd_pos = 0;
+    ud->num_vals = 0;
 	vpi_put_userdata(systfcall, ud);
 	return 0;
 	
@@ -147,32 +154,73 @@ static int my_calltf(char* user_data) {
 		.format = vpiIntVal
 	};
 	
-    int current_vld, current_rdy;
-	//Check if a flit is being sent right now
+    //Start by reading in the values at the start of this time step
+    int current_data, current_vld, current_rdy;
+	vpi_get_value(ud->tdata, &myval);
+	current_data = myval.value.integer;
+    
 	vpi_get_value(ud->tvalid, &myval);
 	current_vld = myval.value.integer;
     
 	vpi_get_value(ud->tready, &myval);
 	current_rdy = myval.value.integer;
 	
-    unsigned next_tdata = 0;
-    unsigned next_tvalid = 0;
+    //Keep TDATA and TVALID constant (in case it hasn't been read yet)
     
+    unsigned next_tdata = current_data;
+    unsigned next_tvalid = current_vld;
+    
+	//Check if a flit is being sent right now
     //If a flit is being sent or we are currently not valid, try to get a new
     //value
 	if (!current_vld || current_rdy) {
-        char buf[80];
-        int len;
-		len = timeout_read(fifo_fd, buf, 79, ctx, 1000);
-        if (successful_transfer(ctx)) {
-            unsigned val;
-            buf[len] = '\0';
-            if (sscanf(buf, "%u\n", &val) != 1) {
-                vpi_printf("Got back numerical input [%s]\n", buf);
-            } else {
-                next_tdata = val;
-                next_tvalid = 1;
+        //Check if we have any saved values to use
+        if (ud->num_vals == 0) {
+            //Try reading from the input
+            char buf[80];
+            int buf_pos = 0;
+            int len;
+            len = timeout_read(fifo_fd, buf, 79, ctx, 1000);
+            if (successful_transfer(ctx)) {
+                //We now have a nice string to work with. Parse out all values 
+                //in a loop
+                buf[len] = '\0';
+                
+                //Read out all the values in this buf.
+                //TODO: fix annoying corner case where a value is straddling two
+                //buffers returned by read()
+                while (buf_pos < 80 && buf[buf_pos] != '\0') {
+                    vpi_printf("buf_pos = %d\n", buf_pos);
+                    vpi_flush();
+                    unsigned val;
+                    int incr;
+                    if (sscanf(buf + buf_pos, "%u\n%n", &val, &incr) != 1) {
+                        vpi_printf("Got bad numerical input [%s]\n", buf + buf_pos);
+                    } else if (ud->num_vals < 80) {
+                        vpi_printf("Read a value! %u\n", val);
+                        vpi_flush();
+                        //Add value into ring buffer
+                        ud->val_buf[ud->wr_pos++] = val;
+                        if (ud->wr_pos >= BUF_SPACE) ud->wr_pos = 0;
+                        ud->num_vals++;
+                    }
+                    if (incr == 0) incr = 1; //Try to move past bad character
+                    buf_pos += incr;
+                }
             }
+        }
+        
+        //Check if we have any values available to dequeue
+        if (ud->num_vals != 0) {
+            //Get value out of ring buffer
+            unsigned val = ud->val_buf[ud->rd_pos++];
+            if (ud->rd_pos >= BUF_SPACE) ud->rd_pos = 0;
+            ud->num_vals--;
+            
+            next_tdata = val;
+            next_tvalid = 1;
+        } else {
+            next_tvalid = 0;
         }
 	}
 	
