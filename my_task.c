@@ -1,7 +1,10 @@
 #include <vpi_user.h>
 #include <stdlib.h>
 #include <time.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
+#include <string.h>
 #include "timeout_rw.h"
 
 typedef struct _calldata {
@@ -22,6 +25,9 @@ static ptr_to_free head = {
 	.next = &head
 };
 
+static timeout_rw_ctx *ctx = NULL;
+int fifo_fd = -1;
+
 void push_ptr_to_free(void *free_me) {
 	ptr_to_free *node = malloc(sizeof(ptr_to_free));
 	node->free_me = free_me;
@@ -41,6 +47,20 @@ void del_ptr_to_free_list() {
 
 static int my_entry_cb(s_cb_data *cb_data) {
 	srand(time(NULL));
+    
+    fifo_fd = open("pipe_to_sim", O_RDONLY);
+    if (fifo_fd < 0) {
+        vpi_printf("Could not open pipe_to_sim: %s\n", strerror(errno));
+        vpi_control(vpiFinish, 1);
+        return -1;
+    }
+    
+    ctx = timeout_rw_init();
+    if (ctx == NULL) {
+        vpi_printf("Could not start timeout_rw library\n");
+        vpi_control(vpiFinish, 1);
+        return -1;
+    }
 	//vpi_printf("In the entry callback\n");
 	return 0;
 }
@@ -48,6 +68,8 @@ static int my_entry_cb(s_cb_data *cb_data) {
 static int my_exit_cb(s_cb_data *cb_data) {
 	//vpi_printf("In the exit callback\n");
 	del_ptr_to_free_list();
+    timeout_rw_deinit(ctx);
+    if (fifo_fd != -1) close(fifo_fd);
 	return 0;
 }
 
@@ -125,19 +147,33 @@ static int my_calltf(char* user_data) {
 		.format = vpiIntVal
 	};
 	
+    int current_vld, current_rdy;
 	//Check if a flit is being sent right now
 	vpi_get_value(ud->tvalid, &myval);
-	int current_vld = myval.value.integer;
+	current_vld = myval.value.integer;
+    
 	vpi_get_value(ud->tready, &myval);
-	int current_rdy = myval.value.integer;
+	current_rdy = myval.value.integer;
 	
-	if (current_vld && current_rdy) {
-		ud->val++;
-		//Decide if we will be valid on this cycle
-		ud->vld = rand() & 1;
-	} else if (ud->vld == 0) {
-		//Decide if we will be valid on this cycle
-		ud->vld = rand() & 1;
+    unsigned next_tdata = 0;
+    unsigned next_tvalid = 0;
+    
+    //If a flit is being sent or we are currently not valid, try to get a new
+    //value
+	if (!current_vld || current_rdy) {
+        char buf[80];
+        int len;
+		len = timeout_read(fifo_fd, buf, 79, ctx, 1000);
+        if (successful_transfer(ctx)) {
+            unsigned val;
+            buf[len] = '\0';
+            if (sscanf(buf, "%u\n", &val) != 1) {
+                vpi_printf("Got back numerical input [%s]\n", buf);
+            } else {
+                next_tdata = val;
+                next_tvalid = 1;
+            }
+        }
 	}
 	
 	//I don't know if this will work, but I would like this task to be
@@ -150,10 +186,10 @@ static int my_calltf(char* user_data) {
 	};
 		
 	//Output next tdata and tvalid
-	myval.value.integer = ud->val;
+	myval.value.integer = next_tdata;
 	vpi_put_value(ud->tdata, &myval, &delay, vpiPureTransportDelay);
 	
-	myval.value.integer = ud->vld;
+	myval.value.integer = next_tvalid;
 	vpi_put_value(ud->tvalid, &myval, &delay, vpiPureTransportDelay);
 	
 	return 0;

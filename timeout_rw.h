@@ -46,6 +46,10 @@ int timed_out(timeout_rw_ctx *ctx);
 //Returns 0 otherwise
 int reached_eof(timeout_rw_ctx *ctx);
 
+//Returns 1 if last call to timeout_read/timeout_write transferred more than
+//zero bytes
+int successful_transfer(timeout_rw_ctx *ctx);
+
 //Gets human-readable string for last error on this context
 #define timeout_rw_strerror(ctx) strerror(ctx->last_errno)
 

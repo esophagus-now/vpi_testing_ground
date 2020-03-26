@@ -200,3 +200,9 @@ int timed_out(timeout_rw_ctx *ctx) {
 int reached_eof(timeout_rw_ctx *ctx) {
     return (ctx->last_ret == 0);
 }
+
+//Returns 1 if last call to timeout_read/timeout_write transferred more than
+//zero bytes
+int successful_transfer(timeout_rw_ctx *ctx) {
+    return (ctx->last_ret > 0);
+}

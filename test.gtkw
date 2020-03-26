@@ -1,0 +1,25 @@
+[*]
+[*] GTKWave Analyzer v3.3.103 (w)1999-2019 BSI
+[*] Thu Mar 26 02:58:47 2020
+[*]
+[dumpfile] "/home/mahkoe/projects/vpi_testing_ground/test.vcd"
+[dumpfile_mtime] "Thu Mar 26 02:56:15 2020"
+[dumpfile_size] 1695
+[savefile] "/home/mahkoe/projects/vpi_testing_ground/test.gtkw"
+[timestart] 0
+[size] 1916 1060
+[pos] -1 -541
+*-14.693172 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 233
+[signals_width] 118
+[sst_expanded] 1
+[sst_vpaned_height] 301
+@28
+main.clk
+@25
+main.tdata[15:0]
+@28
+main.tvalid
+main.tready
+[pattern_trace] 1
+[pattern_trace] 0
